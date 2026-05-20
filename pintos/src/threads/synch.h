@@ -60,9 +60,18 @@ void lock_release (struct lock *);
 bool lock_held_by_current_thread (const struct lock *);
 
 /* Condition variable. */
+/* Condition variable. */
 struct condition 
   {
     struct list waiters;        /* List of waiting threads. */
+  };
+
+/* Semaphore element used for condition variables */
+struct semaphore_elem 
+  {
+    struct list_elem elem;      /* List element. */
+    struct semaphore semaphore; /* This semaphore. */
+    struct thread *thread;      /* The thread waiting */
   };
 
 void cond_init (struct condition *);

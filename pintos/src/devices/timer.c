@@ -166,12 +166,40 @@ timer_print_stats (void)
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
 
+/* Helper function for MLFQS to update priority via thread_foreach */
+static void
+update_priority_helper (struct thread *t, void *aux UNUSED)
+{
+  mlfqs_calculate_priority (t);
+}
+
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+  
+  /* MLFQS: Execute periodic calculations based on exact timer ticks */
+  if (thread_mlfqs)
+    {
+      /* 1. Every single tick: increment recent_cpu of the RUNNING thread */
+      mlfqs_increment_recent_cpu ();
+      
+      /* 2. Every 1 second (TIMER_FREQ ticks): update load_avg and ALL threads' recent_cpu */
+      if (ticks % TIMER_FREQ == 0)
+        {
+          mlfqs_calculate_load_avg ();
+          mlfqs_recalculate_all (); 
+        }
+        
+      /* 3. Every 4 ticks: recalculate priority for ALL threads and sort ready list */
+      if (ticks % 4 == 0)
+        {
+          thread_foreach (update_priority_helper, NULL);
+          thread_mlfqs_sort_ready_list ();
+        }
+    }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
@@ -194,12 +222,7 @@ too_many_loops (unsigned loops)
 }
 
 /* Iterates through a simple loop LOOPS times, for implementing
-   brief delays.
-
-   Marked NO_INLINE because code alignment can significantly
-   affect timings, so that if this function was inlined
-   differently in different places the results would be difficult
-   to predict. */
+   brief delays. */
 static void NO_INLINE
 busy_wait (int64_t loops) 
 {
@@ -211,26 +234,15 @@ busy_wait (int64_t loops)
 static void
 real_time_sleep (int64_t num, int32_t denom) 
 {
-  /* Convert NUM/DENOM seconds into timer ticks, rounding down.
-          
-        (NUM / DENOM) s          
-     ---------------------- = NUM * TIMER_FREQ / DENOM ticks. 
-     1 s / TIMER_FREQ ticks
-  */
   int64_t ticks = num * TIMER_FREQ / denom;
 
   ASSERT (intr_get_level () == INTR_ON);
   if (ticks > 0)
-    {
-      /* We're waiting for at least one full timer tick.  Use
-         timer_sleep() because it will yield the CPU to other
-         processes. */                
+    {               
       timer_sleep (ticks); 
     }
   else 
     {
-      /* Otherwise, use a busy-wait loop for more accurate
-         sub-tick timing. */
       real_time_delay (num, denom); 
     }
 }
@@ -239,8 +251,6 @@ real_time_sleep (int64_t num, int32_t denom)
 static void
 real_time_delay (int64_t num, int32_t denom)
 {
-  /* Scale the numerator and denominator down by 1000 to avoid
-     the possibility of overflow. */
   ASSERT (denom % 1000 == 0);
   busy_wait (loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000)); 
 }
